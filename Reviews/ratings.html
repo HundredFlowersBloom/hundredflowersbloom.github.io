@@ -242,7 +242,7 @@
     function creatorLabel(it){
       let c = it.creator || '';
       if(c === 'u/k') c = 'Unknown';
-      if(it.medium === 'film' && c && c !== 'Unknown') return 'dir. ' + c;
+      if(it.medium === 'film' && c && c !== 'Unknown') return c;
       return c;
     }
 
