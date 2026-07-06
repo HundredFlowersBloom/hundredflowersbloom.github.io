@@ -174,7 +174,6 @@
     </header>
 
     <section class="catalogue" aria-label="Ratings and reviews">
-      <p class="lede"> <span id="masthead-counts"></span></p>
 
       <div class="controls">
         <div class="filters" role="group" aria-label="Filter by medium">
@@ -454,7 +453,7 @@
       }
       const total=DATA.length, n=rows.length;
       const noun = n===1 ? 'entry' : 'entries';
-      countEl.textContent = (n===total) ? (total+' '+noun) : (n+' of '+total+' '+noun);
+      countEl.textContent = (n===total) ? (total+' '+noun) : (n+' '+noun);
     }
 
     /* ---- controls ------------------------------------------------------ */
@@ -485,16 +484,9 @@
     /* ---- boot ---------------------------------------------------------- */
     loadData().then(data=>{
       DATA = Array.isArray(data) ? data : [];
-      const c = DATA.reduce((m,x)=>{m[x.medium]=(m[x.medium]||0)+1;return m;},{});
       const parts=[];
-      if(c.film) parts.push(c.film+' films');
-      if(c.book) parts.push(c.book+' books');
-      if(c.music) parts.push(c.music+' records');
-      const mc=document.getElementById('masthead-counts');
-      if(mc) mc.textContent='('+parts.join(' \u00b7 ')+')';
       const reviewed = DATA.filter(x=>x.review).length;
       const col=document.getElementById('colophon-line');
-      if(col) col.textContent = DATA.length+' entries catalogued, '+reviewed+' with notes.';
       render();
     });
   })();
