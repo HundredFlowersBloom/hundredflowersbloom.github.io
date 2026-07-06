@@ -259,6 +259,27 @@
       }
       return out.toLowerCase().replace(/^(the|a|an)\s+/,'').trim();
     }
+    function creatorKey(it){
+      if(it.creator_sort) return it.creator_sort.toLowerCase().trim();
+      let s = it.creator || '';
+      if(!s) return '';
+      const b = s.indexOf('[');
+      if(b > -1){
+        const close = s.indexOf(']', b);
+        if(close > -1 && NONLATIN.test(s.slice(0,b))) s = s.slice(b+1, close);
+      }
+      s = s.toLowerCase()
+           .replace(/\([^)]*\)/g,' ')
+           .replace(/\bet\s+al\.?/g,' ')
+           .trim();
+      const art = s.match(/^(the|a|an)\s+(.*)$/);
+      if(art) return art[2].trim();
+      s = s.split(/[\/;,]/)[0].trim();
+      if(!s) return '';
+      const parts = s.split(/\s+/);
+      if(parts.length < 2) return s;
+      return (parts[parts.length-1] + ' ' + parts.slice(0,-1).join(' ')).trim();
+    }
     const num = (v)=> (v==null ? -Infinity : v);
 
     /* ---- state --------------------------------------------------------- */
@@ -286,7 +307,7 @@
         if(s==='rating'){
           const d = num(b.rating)-num(a.rating);
           return d
-            || latinKey(a.creator).localeCompare(latinKey(b.creator))
+            || creatorKey(a).localeCompare(creatorKey(b))
             || latinKey(a.title).localeCompare(latinKey(b.title));
         }
         if(s==='year'){
