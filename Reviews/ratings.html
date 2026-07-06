@@ -287,11 +287,15 @@
       rows.sort((a,b)=>{
         if(s==='rating'){
           const d = num(b.rating)-num(a.rating);
-          return d || latinKey(a.title).localeCompare(latinKey(b.title));
+          return d
+            || latinKey(a.creator).localeCompare(latinKey(b.creator))
+            || latinKey(a.title).localeCompare(latinKey(b.title));
         }
         if(s==='year'){
           const d = num(b.year)-num(a.year);
-          return d || latinKey(a.title).localeCompare(latinKey(b.title));
+          return d
+            || latinKey(a.creator).localeCompare(latinKey(b.creator))
+            || latinKey(a.title).localeCompare(latinKey(b.title));
         }
         if(s==='creator'){
           const d = latinKey(a.creator).localeCompare(latinKey(b.creator));
