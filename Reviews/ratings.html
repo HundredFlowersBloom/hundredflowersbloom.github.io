@@ -132,7 +132,7 @@
 
   /* hover cover — a faithful port of your .movielist popup, desktop only,
      shown for any entry that carries an image field in the data */
-  .cover{display:none;position:absolute;right:.2rem;top:.2rem;z-index:99;pointer-events:none}
+  .cover{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:99;pointer-events:none}
   .cover img{height:300px;max-width:46vw;border:2px solid var(--fg);border-radius:4px;background:var(--bg);box-shadow:0 6px 22px rgba(0,0,0,.28)}
   @media (hover:hover) and (min-width:760px){ .entry:hover .cover{display:block} }
 
@@ -159,6 +159,7 @@
   /* ---- colophon ------------------------------------------------------- */
   .colophon{margin-top:2.2rem;padding-top:1.1rem;border-top:2px solid var(--fg);font-size:.76rem;line-height:1.7;color:var(--faint)}
   .colophon p{margin:.2rem 0}
+  .tmdb-credit a{color:inherit;text-decoration:underline}
 </style>
 </head>
 <body>
@@ -207,6 +208,7 @@
       <footer class="colophon">
         <p id="colophon-line"></p>
         <p>A few notes are kept private; the rest expand when you tap an entry. On a desktop, hovering an entry with cover art shows it. Records are placeholders until the music export is wired in.</p>
+        <p class="tmdb-credit">Film posters and data from <a href="https://www.themoviedb.org/">The Movie Database (TMDb)</a>. This product uses the TMDb API but is not endorsed or certified by TMDb.</p>
       </footer>
     </section>
   </div>
