@@ -130,10 +130,9 @@
   .grade-num{font-size:1.25rem;font-variant-numeric:tabular-nums}
   .grade-unrated{font-size:.68rem;text-transform:uppercase;letter-spacing:.08em;color:var(--faint)}
 
-  /* hover cover — a faithful port of your .movielist popup, desktop only,
+  /* hover cover — a faithful port of .movielist popup, desktop only,
      shown for any entry that carries an image field in the data */
-  .cover{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:99;pointer-events:none}
-  .cover img{height:300px;max-width:46vw;border:2px solid var(--fg);border-radius:4px;background:var(--bg);box-shadow:0 6px 22px rgba(0,0,0,.28)}
+  .cover{display:none;position:absolute;top:0;left:50%;transform:translateX(-50%);z-index:99;pointer-events:none}   .cover img{height:300px;max-width:46vw;border:2px solid var(--fg);border-radius:4px;background:var(--bg);box-shadow:0 6px 22px rgba(0,0,0,.28)}
   @media (hover:hover) and (min-width:760px){ .entry:hover .cover{display:block} }
 
   /* expanding review */
