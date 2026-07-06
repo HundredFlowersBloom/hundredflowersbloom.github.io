@@ -307,7 +307,6 @@
       const c=creatorLabel(it);
       if(c) bits.push(c);
       if(it.year!=null) bits.push(String(it.year));
-      bits.push(MEDIUM_LABEL[it.medium] || it.medium);
       return bits.join(' \u00b7 ');
     }
 
