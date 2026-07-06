@@ -1,0 +1,36 @@
+# yaml-language-server: $schema=https://unpkg.com/@sveltia/cms/schema/sveltia-cms.json
+
+# Edits are written to the PRIVATE source repo. Your GitHub Action then strips
+# private reviews and republishes public-ratings.json to the public site.
+backend:
+  name: github
+  repo: HundredFlowersBloom/ratings-source   # the PRIVATE source repo
+  branch: master
+
+# No media library: cover-image paths are typed as plain text (the image files
+# live in the public site repo, not here).
+media_folder: ""
+public_folder: ""
+
+collections:
+  - name: reviews
+    label: Reviews
+    label_singular: Review
+    folder: data/reviews
+    extension: json
+    format: json
+    create: true
+    # filename for NEW entries (existing files keep their id-based names)
+    slug: "{{fields.title}}-{{fields.year}}"
+    identifier_field: title
+    summary: "{{fields.title}} ({{fields.year}}) · {{fields.medium}}"
+    sortable_fields: [title, rating, year, creator]
+    fields:
+      - { name: medium, label: Medium, widget: select, options: [film, book, music] }
+      - { name: title, label: Title, widget: string }
+      - { name: creator, label: Creator, widget: string, required: false }
+      - { name: year, label: Year, widget: number, value_type: int, min: 0, required: false }
+      - { name: rating, label: "Rating (0–10, half steps)", widget: number, value_type: float, min: 0, max: 10, step: 0.5, required: false }
+      - { name: review, label: Review, widget: text, required: false }
+      - { name: review_public, label: "Publish this review?", widget: boolean, default: true }
+      - { name: image, label: "Cover image path (optional)", widget: string, required: false }
