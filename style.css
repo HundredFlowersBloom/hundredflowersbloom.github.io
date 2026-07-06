@@ -8,6 +8,8 @@ html {
                 color 1s ease-in-out;
 }
 
+.navbar a { color: inherit; }
+.navbar a[aria-current="page"] { font-weight: bold; text-decoration: none; }
 
 .navbar {
     display: flex;
@@ -85,9 +87,4 @@ figure img {
 
 #sitetext {
     text-align: center;
-}
-
-#flowers pre {
-    display: inline-block;
-    text-align: left;
 }
