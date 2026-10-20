@@ -159,6 +159,38 @@
   .colophon{margin-top:2.2rem;padding-top:1.1rem;border-top:2px solid var(--fg);font-size:.76rem;line-height:1.7;color:var(--faint)}
   .colophon p{margin:.2rem 0}
   .tmdb-credit a{color:inherit;text-decoration:underline}
+
+  /* ---- year filter: the same underlined field as search --------------- */
+  .year{display:flex;align-items:center;gap:.45rem}
+  input#year{
+    font-family:inherit;font-size:.84rem;color:var(--fg);
+    background:transparent;border:none;border-bottom:2px solid var(--fg);
+    border-radius:0;padding:.25rem .1rem;width:7.5rem;
+    -webkit-appearance:none;appearance:none;
+  }
+  input#year::placeholder{color:var(--faint)}
+  input#year:focus{outline:none}
+  input#year[aria-invalid="true"]{border-bottom-style:dashed}
+  input#search:focus-visible,input#year:focus-visible{box-shadow:0 2px 0 var(--fg)}
+  .vh{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+  /* ---- letter dividers in the A–Z sorts --------------------------------- */
+  .letter{font-weight:bold;font-size:.95rem;padding:1.5rem 0 .35rem;border-bottom:1px solid var(--rule)}
+  .letter:first-child{padding-top:.4rem}
+
+  /* ---- translations and recordings -------------------------------------- */
+  .entry-version{font-size:.78rem;color:var(--faint)}
+  .versions{list-style:none;margin:0;padding:0}
+  .version + .version{margin-top:1.15rem}
+  .version-head{
+    display:flex;justify-content:space-between;align-items:baseline;gap:1.2rem;
+    font-size:.86rem;line-height:1.45;
+    padding-left:1rem;border-left:2px solid var(--fg);
+  }
+  .version-head + p{margin-top:.5rem}
+  .version-name{max-width:70ch}
+  .version-grade{white-space:nowrap}
+  .version-grade .grade-num{font-size:.95rem}
 </style>
 </head>
 <body>
@@ -191,6 +223,11 @@
               <option value="creator">Creator, A–Z</option>
             </select>
           </label>
+            <label class="year">
+              <span class="sort-label">Year</span>
+              <input id="year" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="any" aria-describedby="year-help">
+            </label>
+            <span id="year-help" class="vh">A single year, a decade such as 1960s, or a range such as 1950–75</span>
           <div class="search">
             <input id="search" type="search" inputmode="search" autocomplete="off" placeholder="Search title, creator, note" aria-label="Search entries">
             <button id="clear" class="clear" type="button" hidden>Clear</button>
@@ -205,7 +242,6 @@
 
       <footer class="colophon">
         <p id="colophon-line"></p>
-        <p>A few notes are kept private; the rest expand when you tap an entry. On a desktop, hovering an entry with cover art shows it. Records are placeholders until the music export is wired in.</p>
         <p class="tmdb-credit">Film posters and data from <a href="https://www.themoviedb.org/">The Movie Database (TMDb)</a>. This product uses the TMDb API but is not endorsed or certified by TMDb.</p>
       </footer>
     </section>
@@ -222,273 +258,746 @@
 
   <script>
   (function(){
-    'use strict';
+  'use strict';
 
-    /* ---- data loading -------------------------------------------------- */
-    async function loadData(){
-      try{
-        const res = await fetch('./public-ratings.json', {cache:'no-store'});
-        if(res.ok){ return await res.json(); }
-      }catch(e){ /* file:// or not published yet — use embedded snapshot */ }
-      return JSON.parse(document.getElementById('ratings-data').textContent);
+  /* ---- data loading -------------------------------------------------- */
+  async function loadData(){
+    try{
+      const res = await fetch('./public-ratings.json', {cache:'no-store'});
+      if(res.ok){ return await res.json(); }
+    }catch(e){ /* file:// or not published yet — use embedded snapshot */ }
+    return JSON.parse(document.getElementById('ratings-data').textContent);
+  }
+
+  /* ======================================================================
+     Filing: how titles and names are alphabetised
+     ----------------------------------------------------------------------
+     The rules follow library cataloguing practice (AACR2/RDA). Keys are
+     compared word by word, so "Van Sant" files before "Vanbrugh"; case and
+     accents are ignored; numbers compare as numbers ("3 Women" before
+     "24 Hour Party People" before "2001"). An entry's own title_sort or
+     creator_sort always wins, and a name that needs fixing everywhere can
+     go in FILE_AS below.
+     ====================================================================== */
+
+  const COLL = new Intl.Collator('en', {sensitivity: 'base', numeric: true});
+
+  // Apostrophes and full stops close up (O'Neill → oneill, Dr. → dr), other
+  // punctuation becomes a word break, and & reads as "and".
+  function norm(s){
+    return String(s == null ? '' : s).normalize('NFC')
+      .replace(/&/g, ' and ')
+      .replace(/['’ʼ‘`´.]/g, '')
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .trim().toLowerCase();
+  }
+  // Lowercase with the accents taken off: for search and name lookups.
+  function fold(s){
+    return String(s == null ? '' : s).normalize('NFD').replace(/\p{M}+/gu, '').toLowerCase()
+      .replace(/ø/g, 'o').replace(/æ/g, 'ae').replace(/œ/g, 'oe').replace(/ß/g, 'ss')
+      .replace(/ł/g, 'l').replace(/đ/g, 'd').replace(/ı/g, 'i');
+  }
+  function cmpKeys(a, b){
+    for(let i = 0, n = Math.max(a.length, b.length); i < n; i++){
+      const d = COLL.compare(a[i] || '', b[i] || '');
+      if(d) return d;
     }
+    return 0;
+  }
+  const list = v => Array.isArray(v) ? v.filter(Boolean).map(String) : (v ? [String(v)] : []);
+  const NON_LATIN = /(?!\p{Script=Latin})\p{L}/u;
 
-    /* ---- display helpers ---------------------------------------------- */
-    const MEDIUM_LABEL = {film:'Film', book:'Book', music:'Record'};
+  // Titles and names are often stored as "Original [English]". This also
+  // copes with a missing or mistyped closing bracket.
+  function splitBracket(s){
+    s = String(s == null ? '' : s);
+    const b = s.indexOf('[');
+    if(b < 0) return {orig: s.trim(), alt: ''};
+    const rest = s.slice(b + 1);
+    let c = rest.indexOf(']');
+    if(c < 0) c = rest.indexOf(')');
+    return {orig: s.slice(0, b).trim(), alt: (c < 0 ? rest : rest.slice(0, c)).trim()};
+  }
 
-    function creatorLabel(it){
-      let c = it.creator || '';
-      if(c === 'u/k') c = 'Unknown';
-      if(it.medium === 'film' && c && c !== 'Unknown') return c;
-      return c;
+  /* ---- titles -----------------------------------------------------------
+     A leading article is skipped. A title with no bracketed rendering is
+     read as English, so "Die Hard" stays under D. A Latin-script original
+     with a rendering files under its own language's articles ("Le Mépris"
+     under M, "Det sjunde inseglet" under S); a non-Latin original files
+     under its rendering. */
+  const EN_ARTICLES = new Set(['the', 'a', 'an']);
+  const ARTICLES = new Set(('the le la les un une il lo gli una uno el los las unos unas ' +
+    'der die das dem den ein eine einen einem einer eines het een det ett eit ei ' +
+    'os um uma uns umas az egy').split(' '));
+  // Articles in one language, ordinary words in another (Danish "de" means
+  // "the", French "de" means "of"). Skipped only when the English rendering
+  // also opens with an article: "De Ansatte [The Employees]" files under A,
+  // "De l'amour [On Love]" under D.
+  const MAYBE_ARTICLES = new Set(['de', 'en', 'et', 'des', 'a', 'an', 'i', 'o', 'as']);
+  const ELIDED = /^(l|gl|un)['’]\s*(?=\p{L})/iu;              // L'Étranger
+
+  function skipArticle(s, foreign, rendering){
+    s = String(s || '').replace(/^[^\p{L}\p{N}]+/u, '');
+    if(foreign && ELIDED.test(s)) return s.replace(ELIDED, '');
+    const m = s.match(/^(\p{L}+)\s+(?=[\p{L}\p{N}])/u);
+    if(!m) return s;
+    const w = m[1].toLowerCase();
+    const skip = foreign
+      ? ARTICLES.has(w) || (MAYBE_ARTICLES.has(w) && /^[^\p{L}]*(the|a|an)\s/iu.test(rendering || ''))
+      : EN_ARTICLES.has(w);
+    return skip ? s.slice(m[0].length) : s;
+  }
+  function titleKey(it){
+    if(it.title_sort) return norm(it.title_sort);
+    const {orig, alt} = splitBracket(it.title);
+    if(!orig || NON_LATIN.test(orig)) return norm(skipArticle(alt || orig, false));
+    return norm(skipArticle(orig, !!alt, alt));
+  }
+
+  /* ---- names ------------------------------------------------------------
+     People file under the surname. Particles follow the national rule, and
+     the way a name is written already says which rule applies:
+       lowercase von, van, de, del, da, di … are set aside (German, Dutch,
+       Scandinavian, French, Spanish and Portuguese usage):
+         Goethe, Johann Wolfgang von · Beauvoir, Simone de · Toro, Guillermo del
+       capitalised particles belong to the surname (English, Belgian and
+       modern Italian usage): Van Sant, Gus · De Palma, Brian · Le Guin, Ursula K.
+       French articles stay with the surname even in lowercase:
+         du Maurier, Daphne · La Fontaine, Jean de
+     Korean names, and Chinese names given family name first, file as
+     written; Japanese names given in Western order are turned. Bands,
+     mononyms and stage names file as written, minus a leading "The". */
+
+  // Names the rules can't work out. Key: the name as the data has it (the
+  // bracketed rendering for non-Latin names). Value: how to file it, with a
+  // comma where the name turns; no comma files it exactly as written.
+  const FILE_AS = {
+    'Gabriel García Márquez': 'García Márquez, Gabriel',  // father's surname, then mother's
+    'Xu Chenggang':           'Xu, Chenggang',            // family name first
+    'Sun Tzu':                'Sun Tzu',
+    'Marcus Aurelius':        'Marcus Aurelius',          // known by the whole name
+    'Dante Alighieri':        'Dante Alighieri',
+    'Hildegard von Bingen':   'Hildegard von Bingen',     // "von Bingen" is a byname
+    'Van Morrison':           'Morrison, Van',            // "Van" is his first name
+    'Ralph Vaughan Williams': 'Vaughan Williams, Ralph',  // double-barrelled without the hyphen
+    'Jay Z':                  'Jay Z',
+    'Cat Power':              'Cat Power',
+    // bands whose names start like a person's
+    'Art Bears': 'Art Bears',  'Art Zoyd': 'Art Zoyd',  'Booker T. & The M.G.\'s': 'Booker T. & The M.G.\'s',
+    'Don Caballero': 'Don Caballero',  'Franz Ferdinand': 'Franz Ferdinand',  'Harvey Danger': 'Harvey Danger',
+    'Henry Cow': 'Henry Cow',  'Jackie-O Motherfucker': 'Jackie-O Motherfucker',  'Josef K': 'Josef K',
+    'Modest Mouse': 'Modest Mouse',  'T. Rex': 'T. Rex',  'U.S. Maple': 'U.S. Maple'
+  };
+  const FILE_AS_KEYS = new Map(Object.entries(FILE_AS).map(([k, v]) => [norm(k), v.split(',').map(norm)]));
+
+  const SET_ASIDE = new Set(['von', 'van', 'der', 'den', 'de', 'del', 'da', 'das', 'do', 'dos', 'di',
+    'ten', 'ter', 'te', 'zu', 'af', 'av', 'op', "'t", '’t']);
+  const STAYS = new Set(['le', 'la', 'les', 'du', 'des', 'della', 'delle', 'dello', 'degli', 'dei',
+    'dal', 'dalla', 'dalle', 'dagli', 'dai', 'vom', 'zum', 'zur', 'am', 'im', 'los', 'las']);
+  const PREFIXES = new Set(['saint', 'st', 'sainte', 'san', 'santa', 'mac', 'mc', 'ó', 'ní', 'nic']);
+  const HONORIFIC = /^(sir|dame|lord|lady|dr|prof|professor|rev|reverend|saint|st|fr|father)\.?$/i;
+  const SUFFIX = /^(jr|sr|ii|iii|iv)\.?$/i;
+  const bare = w => w.toLowerCase().replace(/\.$/, '');
+  const isCap = w => /^\p{Lu}/u.test(w);
+  const isParticle = w => SET_ASIDE.has(bare(w)) || STAYS.has(bare(w)) || PREFIXES.has(bare(w));
+
+  // "Given [particles] Surname" → [surname, given names, set-aside particles, suffix, honorific]
+  function invert(name){
+    const t = name.split(' ');
+    let honorific = '', suffix = '';
+    if(t.length > 2 && HONORIFIC.test(t[0])) honorific = t.shift();      // Sir Arthur Conan Doyle
+    while(t.length > 2 && SUFFIX.test(t[t.length - 1])) suffix = t.pop() + (suffix && ' ' + suffix);
+    let core = t.length - 1;
+    if(t.length >= 4 && /^(y|i)$/.test(t[core - 1])) core -= 2;          // Ortega y Gasset
+    let start = core;
+    while(start > 1 && isParticle(t[start - 1])) start--;               // never the first word: Van Morrison
+    const run = t.slice(start, core);
+    let k = run.length;                                                  // run[k…] stays with the surname
+    for(let j = 0; j < run.length; j++){
+      const afterSetAside = j > 0 && !isCap(run[j - 1]) && !STAYS.has(bare(run[j - 1]));
+      if(isCap(run[j]) || (STAYS.has(bare(run[j])) && !afterSetAside)){ k = j; break; }
     }
+    const surname = run.slice(k).concat(t.slice(core));
+    const aside = run.slice(0, k);
+    if(/^d['’](?=\p{L})/u.test(surname[0])){                             // Alembert, Jean le Rond d'
+      aside.push(surname[0].slice(0, 2)); surname[0] = surname[0].slice(2);
+    }
+    return [norm(surname.join(' ')), norm(t.slice(0, start).join(' ')),
+            norm(aside.join(' ')), norm(suffix), norm(honorific)];
+  }
 
-    // Sort key: Latin, lowercased, leading article dropped. Many titles and
-    // names are stored as "Original [Romanization]"; when the leading text is
-    // non-Latin we sort on the bracketed romanization so ordering matches what
-    // a reader scanning in English expects.
-    const NONLATIN = /[^\u0000-\u024F]/;
-    function latinKey(s){
-      if(!s) return '';
-      let out = s;
-      const b = s.indexOf('[');
-      if(b > -1){
-        const close = s.indexOf(']', b);
-        if(close > -1 && NONLATIN.test(s.slice(0,b))) out = s.slice(b+1, close);
+  const HANGUL = /\p{Script=Hangul}/u, HAN = /\p{Script=Han}/u;
+  const KANA = /[\p{Script=Hiragana}\p{Script=Katakana}]/u;
+  const ZH_SURNAMES = new Set((
+    'wang li zhang liu chen yang huang zhao wu zhou xu sun ma zhu hu guo he lin gao luo zheng ' +
+    'liang xie song tang han feng deng cao peng zeng xiao tian dong pan yuan cai jiang yu du ye ' +
+    'cheng wei su lu ding ren yao shen zhong cui tan fan liao shi jin jia xia fu fang zou xiong ' +
+    'bai meng qin qiu hou yin xue yan duan lei long tao mao hao gu gong shao wan qian lai hong mo ' +
+    'kong ning bi ou ouyang situ sima zhuge kang yi qi xing geng niu wen ji chang chao chou hsu ' +
+    'hsieh hsiao kuo lee lim lau leung cheung chan wong ho ng tsui hui kwan lam chow to tse yip ' +
+    'fung kwok yuen tsang mak tsai chiang chung tseng teng tu kao lo ko kung yeh tai pai chien ' +
+    'chin chu chuang shih yen tung yau siu tam lui mok choi choy szeto au kam koo ku kwong hung ' +
+    'fong ching chiu ngai poon pang tong wai').split(' '));
+  // Korean names, and Chinese names romanised family name first ("Wong
+  // Kar-wai", but not "Edward Yang"), stay in the order given.
+  function familyFirst(orig, name){
+    if(HANGUL.test(orig)) return true;
+    return HAN.test(orig) && !KANA.test(orig) && ZH_SURNAMES.has(fold(name.split(' ')[0]));
+  }
+
+  /* ---- records: person or band? -------------------------------------------
+     Word order can't tell King Crimson from John Coltrane, so a record
+     artist is turned only when the name starts with a recognisable given
+     name or an initial, or is the composer of a classical work. Names with
+     "of", "&", "and the" and the like are bands; "Duke Ellington and His
+     Orchestra" and "John Coltrane Quartet" file under the leader. Anything
+     this gets wrong is one line in FILE_AS. */
+  const GIVEN = new Set(`
+    aaron abe abraham adam adrian al alan albert alec alex alexander alexis alfie alfred allan allen
+    alvin amos andre andrew andy angus anthony antony archie arlo arnold art arthur austin barney barry bart
+    ben benjamin benny bernard bernie bert bill billy bix blake bob bobby brad bradley brandon branford
+    brendan brent brett brian bruce bryan bud buddy burt byron cal calvin cameron cannonball carl carlos
+    carter casey cecil cedric chad charles charley charlie chase chester chet chick chris christian
+    christopher chuck clarence claude clay clem cliff clifford clint clyde cody coleman colin conor conrad
+    cornelius count craig curt curtis cyril dale damian damien dan daniel danny darius darren dave davey
+    david dean dennis denny denzel derek desmond devin dewey dexter dick dirk dizzy django dom dominic don
+    donald donny doug douglas duane dudley duke dustin dwight earl ed eddie eddy edgar edmund edward edwin
+    eli elias elijah elliot elliott ellis elmer elmore elton elvin elvis emil emmett eric erik ernest
+    ernie ethan eugene evan everett ezra fats felix floyd francis frank frankie franklin fred freddie
+    freddy frederick gabe gabriel gary gavin gene geoff geoffrey george gerald gerard gerry gigi gil
+    gilbert ginger glen glenn gordon graham grant greg gregg gregory gus guy hal hampton hank hans harlan
+    harold harrison harry harvey hector henry herb herbie herbert herman homer horace howard howie hugh
+    hugo ian idris ira irving isaac isaiah ivan jack jackie jackson jaco jacob jake james jamie jared
+    jason jasper jeff jeffrey jelly jeremy jerome jerry jesse jim jimi jimmie jimmy joe joel joey john
+    johnnie johnny jon jonah jonathan jonny jordan joseph josh joshua jules julian julius junior justin
+    kamasi kanye karl keith ken kendrick kenneth kenny kevin kirk kris kurt kyle lalo lance larry
+    laurence lawrence lee len lennie leo leon leonard leroy les leslie lester levi lewis liam lincoln
+    lionel lloyd lonnie lou louie louis lowell lucas luke luther lyle mac makaya mal malcolm marc marcel
+    marco marcus mario mark marshall martin marty marvin mason matt matthew maurice max maxwell mccoy mel
+    melvin merle michael mick mickey mike miles milo milt milton mitch mitchell moe monty morgan morris
+    morton moses muddy murray nat nate nathan nathaniel neal ned neil nelson nicholas nick nicky nico
+    noah noel norman oliver ollie omar ornette orville oscar otis otto owen pat patrick paul percy pete
+    peter pharoah phil philip phillip philly pierce porter quentin quincy rahsaan ralph randall randy
+    raphael ray raymond reggie richard richie rick ricky rob robbie robert robin rod rodney roger roland
+    ron ronald ronnie ronny rory roscoe ross roy ruben rudy rufus rupert russ russell rusty ry ryan sal
+    sam sammy samuel scott sean seth shabaka shane shawn sid sidney simon skip smokey solomon sonny
+    spencer stan stanley stephen sterling steve steven stevie stewart stu stuart sufjan ted teddy
+    terence terry theo theodore thelonious thom thomas tim timothy tobias toby todd tom tommy tony
+    townes travis trevor troy ty tyler vance vaughn vernon victor vince vincent virgil wade walker
+    wallace walt walter wardell warren wayne wendell wes wesley wilbur will willard willie william
+    willis wilson woody wyatt wynton yusef zach zachary zack zoot
+    abby abigail ada adele adrienne agnes aimee alanis alice alicia alison allison amanda amber amelia
+    amy ana anastasia andrea angel angela angelica angie anita ann anna annabel anne annette annie anya
+    april aretha ariana ashley astrid audrey ava barbara beatrice becky bella bernadette beth bethany
+    betsy betty beverly bianca billie bonnie brenda bridget brigitte britney brittany brooke caitlin
+    camille candace cara carina carla carly carmen carol carole caroline carrie cassandra catherine
+    cathy cecilia celeste celia celine chaka charlotte chelsea cheryl chloe christina christine cindy
+    claire clara claudia colleen connie constance cora courtney cynthia dana danielle daphne dawn
+    debbie deborah debra delia denise diana diane dinah dionne dolly dolores donna dora doris dorothy
+    edie edith eileen elaine eleanor elena eliane elisabeth eliza elizabeth ella ellen ellie eloise elsa
+    elsie emily emma emmylou erica erin erykah esperanza esther ethel etta eunice eva evelyn faith fanny
+    faye felicia fiona flora florence frances francesca gabriella gail gal galina gayle georgia
+    geraldine gia gillian gina gladys gloria grace greta gretchen gwen hannah harriet hayley hazel
+    heather heidi helen helena hilary holly ida ingrid irene iris isabel isabella isabelle ivy
+    jacqueline jan jane janet janice janis jasmine jean jeanette jeanne jenna jennifer jenny jessica
+    jessie jill jo joan joanna joanne jodi jody joni josephine joyce judith judy julia julie juliet june
+    kaija kali karen karin kate katherine kathleen kathryn kathy katie katrina kay kelly kim kimberly
+    kirsten kristin lana laura lauren laurie lauryn leah leigh lena lila lily linda lindsay lisa liz
+    liza lizzie lois lola lorena lori lorna lorraine lotte louisa louise lucia lucinda lucy luisa lydia
+    lynn mabel madeleine madeline mae maggie mahalia mamie mandy marcia margaret margo maria mariah
+    marian marianne marie marilyn marion marisa marjorie martha mary maureen mavis maxine meg megan
+    melanie melissa mercedes meredith mia michelle mildred millie minnie miranda miriam missy molly
+    mona monica nadia nancy naomi natalia natalie nell nellie nicola nicole nina nora norah norma nubya
+    olga olivia pam pamela patricia patsy patti patty paula pauline peggy penelope penny petula phoebe
+    polly priscilla rachel rebecca regina rhiannon rita roberta robyn rosa rosalie rosanne rose
+    rosemary roxanne ruth sabrina sally samantha sandra sandy sara sarah selena shania shannon sharon
+    sheila shelby shirley sinead sofia sonia sophia sophie stella stephanie sue susan susanna susanne
+    suzanne suzi sylvia tamara tammy tanya tara teena teresa terri tess thelma theresa tierra tina toni
+    tori tracy ursula valerie vanessa vera veronica vicky victoria viola violet violeta virginia vivian
+    wanda wendy whitney willa yvonne zoe
+    agustin ahmad ahmed aleksander aleksandr alessandro alexandre alexei alfonso alfredo ali alois amir
+    anatol anatoly anders andreas andrei andres andrzej angelo anton antoine antonin antonio arne arturo
+    arvo astor augusto aurelio axel bela benedikt benoit bernd bjorn bohuslav boris bruno caetano carlo
+    cesar charly chico christoph christophe claudio constantin cornelis dario dieter dimitri dmitri
+    dmitry domenico edvard egberto egon einar elomar emile emilio enrico ennio erasmo ernesto ernst esa
+    esteban etienne eugen eugenio fabio fabrizio farid fatima federico fela felipe femi ferenc fernando
+    ferruccio filippo florian francesco franco francois frantisek franz frederic frederico friedrich
+    fritz gabor gaetano georg georges gerhard giacinto giacomo giancarlo gilberto gioachino giorgio
+    giovanni girolamo giulio giuseppe gonzalo gottfried guido guillaume gunter gustav gustavo gyorgy
+    hamza hanns hassan heiner heinrich heinz helmut henri henrik hermann hermeto hossein iannis ibrahim
+    igor ignacio ilya istvan ivo jacopo jacques jakob janos javier jens jerzy joachim joao joaquim
+    joaquin johann johannes jorge jose josef josep juan jurgen karel karim karlheinz kazimierz khaled
+    klaus krzysztof lajos lars laszlo leos leonid leopold lorenzo luca luciano ludovico ludwig luigi
+    luis lukas mahmoud manfred manuel marcello marcos markus mathieu matteo matthias mauricio maurizio
+    maxim michel miguel mikhail milos modest mohamed mohammed morten muhammad mulatu mustafa niccolo
+    nikolai nikolaus niels nils olivier oskar ottorino oumou paco paolo pascal pasquale pavel pedro per
+    pierluigi pierre pieter pietro piotr pyotr rainer ravi raul reinhold rene ricardo riccardo roberto
+    rodolfo rodrigo rolf rudolf ruggero salif salvador salvatore samir sandro santiago sebastian sergei
+    sergey sergio sigismund silvio stefan stefano steffen sven sviatoslav tadeusz thierry tomas toru
+    ulrich umberto vaclav valentin vasily viktor vincenzo vinicius vittorio vladimir walther werner
+    wilhelm willem witold wojciech wolfgang xavier yann youssef youssou yusuf yves yuri zakir zbigniew
+    zoltan anja annelies asha birgit cecile chantal christa elisabetta emmanuelle francoise gisela
+    hanna hedwig hilde hildegard irmgard juliette katarina katharina lata magda margarethe marguerite
+    martina mirella monika nathalie renata renee sabine silke simone solveig sylvie ulrike ute
+    veronique yvette
+    akiko akira anri ayumi chie eiko eri fumio fumiko hajime haruka haruki haruomi hideki hikaru hiro
+    hiroko hiroshi hisashi ichiko isao jun junko kaoru kazuki kazuko kazumi keiichi keiji keiko kenji
+    kiyoshi koji kyoko makoto mami mariko mariya masaaki masahiro masami masayoshi masayuki michiko
+    midori miho miki minako mitsuko nobuo nobuko noriko osamu reiko ryo ryoji ryuichi ryuji sachiko
+    satoko satoshi shigeru shinji shintaro shiro shoji susumu tadashi taeko takashi takeshi tatsuro
+    tetsu tetsuya tomoko toshiko toshiyuki yasuaki yasuo yoko yoshi yoshiko yoshinori yoshio yukari
+    yuki yukihiro yukio yumi yumiko yuko yusuke
+    avishai baden booker butch carolyn cat conlon devendra devon dylan eberhard elis elysia farrah
+    geordie horatiu iggy jaki jay jerskin jj jordaan julee kayla logan madison marek miroslav mj mort
+    nala nara nicolas nuno paddy pj rina serge takehisa tigran
+  `.split(/\s+/).filter(Boolean));
+  const ENSEMBLE = /^(orchestra|orchestre|orchester|orkestra|arkestra|ensemble|quartet|quintet|sextet|septet|octet|nonet|tentet|trio|combo|band|group|choir|chorus|singers|players|consort|collective|unit|experience|allstars|all-stars)$/i;
+  const GROUPISH = /(^|\s)(and|&|\+|of|for|to|at|in|on|from|with|is|are|was|my|your|our|their|no|not|vs|x)(\s|$)/i;
+  const CLASSICAL = /\b(op\.?\s*\d|opus\b|bwv|hwv|kv?\.?\s*\d|d\.\s*\d{2,}|rv\s*\d|hob\.|symphon|concert[oi]|sonat|quartet|quintet|suite|mass\b|missa|requiem|pr[eé]lude|fugue|nocturne|[ée]tudes?\b|variations|cantata|oratorio|overture|serenade|partita|mazurka|polonaise|ballade|scherzo|rhapsod|in [a-g](?:[- ](?:flat|sharp))?\s+(?:major|minor))/iu;
+
+  const NUMBER = /^(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|hundred|thousand|million)$/i;
+  const isClassical = it => list(it.performers).length > 0 || CLASSICAL.test(it.title || '');
+  function looksLikePerson(name, it){
+    const t = name.split(' ');
+    if(t.length < 2 || GROUPISH.test(name) || /\d/.test(name) || /['’]s(\s|$)/i.test(name)) return false;
+    if(NUMBER.test(t[t.length - 1])) return false;                          // Ben Folds Five
+    if(t.some(w => /^\p{Ll}/u.test(w) && !isParticle(w))) return false;   // "Thy catafalque"
+    const first = fold(t[0]).replace(/\.$/, '');
+    return isClassical(it) || /^(\p{Lu}\.)+$/u.test(t[0]) ||
+           GIVEN.has(first) || GIVEN.has(first.split('-')[0]);
+  }
+  // The person a record artist should file under, or null for a band.
+  function recordPerson(name, it){
+    const led = name.match(/^(.+?)\s+(?:and|&)\s+(?:his|her|their|the)\s/i);
+    if(led) return looksLikePerson(led[1], it) ? led[1] : null;
+    const t = name.split(' ');
+    if(t.length >= 3 && ENSEMBLE.test(t[t.length - 1])){
+      const leader = t.slice(0, -1).join(' ');
+      return looksLikePerson(leader, it) ? leader : null;
+    }
+    return looksLikePerson(name, it) ? name : null;
+  }
+
+  function nameKey(raw, it){
+    const {orig, alt} = splitBracket(raw);
+    // A non-Latin original files under its rendering, and so does a person's
+    // Latin name with an English form (Quintus Horatius Flaccus [Horace]); on
+    // a record artist a bracket is just a gloss (Il Balletto di Bronzo
+    // [The Bronze Ballet]).
+    const useAlt = !!alt && (!orig || NON_LATIN.test(orig) || it.medium !== 'music');
+    let name = (useAlt ? alt : orig)
+      .replace(/\([^)]*\)?/g, ' ')                              // Sun Tzu (traditionally)
+      .replace(/,\s*(jr|sr|ii|iii|iv)\.?\s*$/i, ' $1')           // King, Jr.
+      .replace(/\s+/g, ' ').trim();
+    if(!name) return null;
+    const fixed = FILE_AS_KEYS.get(norm(name));
+    if(fixed) return fixed;
+    if(alt && !useAlt) return [norm(skipArticle(name, true, alt))];
+    const lead = name.match(/^(the|a|an)\s+(\S.*)$/i);
+    if(lead) return [norm(lead[2])];                             // The Beach Boys
+    if(useAlt && familyFirst(orig, name)) return [norm(name)];
+    if(!name.includes(' ') || /^(le|la|les|el|los|las|il)\s/i.test(name)) return [norm(name)];
+    if(it.medium === 'music'){
+      const person = recordPerson(name, it);
+      if(!person) return [norm(name)];
+      name = person;
+    }
+    return invert(name);
+  }
+
+  const UNKNOWN = /^\s*(u\/k|unknown|anon(ymous|\.)?|various( artists)?|v\/?a|n\/a)?\s*$/i;
+  function creatorNames(raw){
+    const s = String(raw == null ? '' : raw).normalize('NFC');
+    if(UNKNOWN.test(s)) return [];
+    return s.replace(/\bet\s+al\b\.?/gi, ' ')
+      .split(/\s*[;\/]\s*|,\s+(?=[^,\s]+\s+[^,\s])/)
+      .map(x => x.trim()).filter(Boolean);
+  }
+  // Works by an unknown creator file under their title, as in a catalogue.
+  function creatorKey(it){
+    if(it.creator_sort) return String(it.creator_sort).split(',').map(norm);
+    const names = creatorNames(it.creator);
+    return (names.length && nameKey(names[0], it)) || [titleKey(it)];
+  }
+
+  /* ---- years ------------------------------------------------------------
+     The year box takes 1957, 1960s, 60s, 1800s, 19th century, 1950–1975,
+     1950–75, 1990–, –1900, before 1900, after 1990, 400 BCE, 500–300 BCE. */
+  const fmtYear = y => (typeof y === 'number' && y < 0) ? (-y) + ' BCE' : String(y);
+  const isBce = e => e === 'bc' || e === 'bce';
+
+  function parseYears(input){
+    const s = String(input == null ? '' : input).toLowerCase().replace(/\./g, '')
+      .replace(/[–—−]/g, '-').replace(/\s+(to|until|till)\s+/g, '-')
+      .replace(/\s+/g, ' ').trim();
+    if(!s) return null;
+    const ERA = '(?:\\s*(bce|bc|ce|ad))?';
+    const at = (n, e) => isBce(e) ? -n : n;
+    let m;
+    if((m = s.match(new RegExp('^(\\d{1,2})(?:st|nd|rd|th) ?c(?:ent(?:ury)?)?' + ERA + '$')))){
+      const c = +m[1];
+      return isBce(m[2]) ? {lo: -c * 100, hi: -(c - 1) * 100 - 1} : {lo: (c - 1) * 100, hi: (c - 1) * 100 + 99};
+    }
+    if((m = s.match(/^(\d{1,2})00s$/)) && +m[1] < 20) return {lo: +m[1] * 100, hi: +m[1] * 100 + 99};
+    if((m = s.match(/^(\d{2,3})0s$/))) return {lo: +m[1] * 10, hi: +m[1] * 10 + 9};
+    if((m = s.match(/^'?(\d)0s$/))) return {lo: 1900 + +m[1] * 10, hi: 1909 + +m[1] * 10};
+    if((m = s.match(new RegExp('^(\\d{1,4})' + ERA + ' ?- ?(\\d{1,4})' + ERA + '$')))){
+      let b = +m[3];
+      if(!m[2] && !m[4] && m[3].length < m[1].length) b = +(m[1].slice(0, m[1].length - m[3].length) + m[3]);
+      const A = at(+m[1], m[2] || (isBce(m[4]) ? m[4] : '')), B = at(b, m[4]);
+      return {lo: Math.min(A, B), hi: Math.max(A, B)};
+    }
+    if((m = s.match(new RegExp('^(\\d{1,4})' + ERA + ' ?(?:-|\\+|on|onwards?|or later|and later)$'))))
+      return {lo: at(+m[1], m[2]), hi: Infinity};
+    if((m = s.match(new RegExp('^(?:-|up to|until|till|to) ?(\\d{1,4})' + ERA + '$'))))
+      return {lo: -Infinity, hi: at(+m[1], m[2])};
+    if((m = s.match(new RegExp('^(?:<|before|pre) ?(\\d{1,4})' + ERA + '$'))))
+      return {lo: -Infinity, hi: at(+m[1], m[2]) - 1};
+    if((m = s.match(new RegExp('^(>|after|post|since|from) ?(\\d{1,4})' + ERA + '$')))){
+      const v = at(+m[2], m[3]);
+      return /^(>|after|post)/.test(m[1]) ? {lo: v + 1, hi: Infinity} : {lo: v, hi: Infinity};
+    }
+    if((m = s.match(new RegExp('^(?:c|ca|circa)? ?(\\d{1,4})' + ERA + '$')))){
+      const v = at(+m[1], m[2]); return {lo: v, hi: v};
+    }
+    return undefined;                                        // not understood
+  }
+  // For the empty-state message: "from 1957", "from the 1960s", "up to 1900"
+  function yearPhrase(r){
+    if(r.lo === -Infinity) return 'up to ' + fmtYear(r.hi);
+    if(r.hi === Infinity) return 'from ' + fmtYear(r.lo) + ' on';
+    if(r.lo === r.hi) return 'from ' + fmtYear(r.lo);
+    if(r.lo >= 0 && ((r.lo % 100 === 0 && r.hi === r.lo + 99) || (r.lo % 10 === 0 && r.hi === r.lo + 9)))
+      return 'from the ' + r.lo + 's';
+    return 'from ' + fmtYear(r.lo) + '\u2013' + fmtYear(r.hi);
+  }
+
+  /* ---- translations and recordings --------------------------------------
+     Books may carry translator, translated (the translation's year) and
+     edition; records may carry performers, recorded and label. Entries that
+     share a title and creator and name a translator, an edition or
+     performers are shown as one work, each version rated on its own. */
+  const isVersion = it => it.medium === 'book' ? !!(list(it.translator).length || it.edition)
+                        : it.medium === 'music' ? list(it.performers).length > 0 : false;
+  const listJoin = a => a.length < 3 ? a.join(' and ') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
+  const MONTHS = 'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ');
+  function fmtDate(s){
+    const m = String(s).trim().match(/^(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?$/);
+    if(!m) return null;
+    return [m[3] && +m[3], m[2] && MONTHS[+m[2] - 1], m[1]].filter(Boolean).join(' ');
+  }
+  // 1962-10-09 → 9 Oct 1962 · 1962-10/1963-03 → Oct 1962–Mar 1963 ·
+  // 1962-10/1962-11 → Oct–Nov 1962 · anything else is shown as written
+  function fmtRecorded(v){
+    const s = String(v).trim(), parts = s.split('/');
+    if(parts.length === 2){
+      const a = fmtDate(parts[0]), b = fmtDate(parts[1]);
+      if(a && b){
+        const y = parts[0].trim().slice(0, 4);
+        return (y === parts[1].trim().slice(0, 4) && a !== y ? a.slice(0, -5) : a) + '\u2013' + b;
       }
-      return out.toLowerCase().replace(/^(the|a|an)\s+/,'').trim();
     }
-    function creatorKey(it){
-      if(it.creator_sort) return it.creator_sort.toLowerCase().trim();
-      let s = it.creator || '';
-      if(!s) return '';
-      const b = s.indexOf('[');
-      if(b > -1){
-        const close = s.indexOf(']', b);
-        if(close > -1 && NONLATIN.test(s.slice(0,b))) s = s.slice(b+1, close);
-      }
-      s = s.toLowerCase()
-           .replace(/\([^)]*\)/g,' ')
-           .replace(/\bet\s+al\.?/g,' ')
-           .trim();
-      const art = s.match(/^(the|a|an)\s+(.*)$/);
-      if(art) return art[2].trim();
-      s = s.split(/[\/;,]/)[0].trim();
-      if(!s) return '';
-      const parts = s.split(/\s+/);
-      if(parts.length < 2) return s;
-      return (parts[parts.length-1] + ' ' + parts.slice(0,-1).join(' ')).trim();
+    return fmtDate(s) || s;
+  }
+  function versionLine(it){
+    const bits = [];
+    if(it.medium === 'book'){
+      const tr = listJoin(list(it.translator));
+      if(tr) bits.push('tr. ' + tr + (it.translated ? ', ' + fmtYear(+it.translated || it.translated) : ''));
+      if(it.edition) bits.push(String(it.edition));
+    }else if(it.medium === 'music'){
+      const p = list(it.performers).join(', ');
+      if(p) bits.push(p);
+      if(it.recorded) bits.push('rec. ' + fmtRecorded(it.recorded));
+      if(it.label) bits.push(String(it.label));
     }
-    const num = (v)=> (v==null ? -Infinity : v);
+    return bits.join(' \u00b7 ');
+  }
+  function versionNoun(w){
+    if(w.medium === 'music') return 'recordings';
+    const tr = w.versions.filter(v => list(v.translator).length).length;
+    return tr === w.versions.length ? 'translations' : tr === 0 ? 'editions' : 'versions';
+  }
 
-    /* ---- state --------------------------------------------------------- */
-    let DATA = [];
-    const state = { medium:'film', sort:'rating', query:'' };
+  /* ---- display helpers ---------------------------------------------- */
+  function creatorLabel(it){
+    const c = it.creator || '';
+    return c === 'u/k' ? 'Unknown' : c;
+  }
+  function metaLine(it){
+    const bits = [];
+    const c = creatorLabel(it);
+    if(c) bits.push(c);
+    if(it.year != null && it.year !== '') bits.push(fmtYear(it.year));
+    return bits.join(' \u00b7 ');
+  }
 
-    const listEl  = document.getElementById('list');
-    const emptyEl = document.getElementById('empty');
-    const countEl = document.getElementById('count');
-    const searchEl= document.getElementById('search');
-    const clearEl = document.getElementById('clear');
+  /* ---- state --------------------------------------------------------- */
+  let DATA = [];
+  const state = { medium:'film', sort:'rating', query:'', years:null };
 
-    /* ---- view ---------------------------------------------------------- */
-    function currentView(){
-      const q = state.query.trim().toLowerCase();
-      let rows = DATA.filter(it => state.medium==='all' || it.medium===state.medium);
-      if(q){
-        rows = rows.filter(it=>{
-          const hay = (it.title+' '+(it.creator||'')+' '+(it.review||'')).toLowerCase();
-          return hay.indexOf(q) !== -1;
+  const listEl  = document.getElementById('list');
+  const emptyEl = document.getElementById('empty');
+  const countEl = document.getElementById('count');
+  const searchEl= document.getElementById('search');
+  const clearEl = document.getElementById('clear');
+  const yearEl  = document.getElementById('year');
+
+  // Sort and search keys are worked out once, when the data arrives.
+  function prepare(it){
+    it._title = titleKey(it);
+    it._creator = creatorKey(it);
+    it._hay = fold([it.title, it.creator, it.review, list(it.translator).join(' '), it.edition,
+                    list(it.performers).join(' '), it.recorded, it.label].filter(Boolean).join(' '));
+  }
+
+  /* ---- view ---------------------------------------------------------- */
+  const desc = v => (v == null || v === '') ? -Infinity : +v;      // missing values sort last
+  const asc  = v => (v == null || v === '') ?  Infinity : +v;
+  const SORTS = {
+    rating:  (a, b) => desc(b.rating) - desc(a.rating) || cmpKeys(a._creator, b._creator) || COLL.compare(a._title, b._title),
+    year:    (a, b) => desc(b.year) - desc(a.year) || cmpKeys(a._creator, b._creator) || COLL.compare(a._title, b._title),
+    creator: (a, b) => cmpKeys(a._creator, b._creator) || asc(a.year) - asc(b.year) || COLL.compare(a._title, b._title),
+    title:   (a, b) => COLL.compare(a._title, b._title) || cmpKeys(a._creator, b._creator) || asc(a.year) - asc(b.year)
+  };
+
+  // Translations or recordings of one work become a single row.
+  function groupVersions(rows){
+    const out = [], works = new Map();
+    for(const it of rows){
+      if(!isVersion(it)){ out.push(it); continue; }
+      const key = it.medium + '|' + it._title + '|' + it._creator.join(' ');
+      let w = works.get(key);
+      if(!w){ w = {versions: []}; works.set(key, w); out.push(w); }
+      w.versions.push(it);
+    }
+    return out.map(r => !r.versions ? r : r.versions.length === 1 ? r.versions[0] : makeWork(r.versions));
+  }
+  const versionYear = v => { const m = String(v.recorded || v.translated || '').match(/\d{3,4}/); return m ? +m[0] : Infinity; };
+  function makeWork(versions){
+    versions.sort((a, b) => desc(b.rating) - desc(a.rating) || versionYear(a) - versionYear(b));
+    const lead = versions[0];
+    const years = versions.map(v => v.year).filter(y => typeof y === 'number');
+    return {
+      versions, medium: lead.medium, title: lead.title, creator: lead.creator,
+      year: years.length ? Math.min(...years) : lead.year,
+      rating: lead.rating,                                        // the best of them
+      image: lead.image || (versions.find(v => v.image) || {}).image,
+      _title: lead._title, _creator: lead._creator
+    };
+  }
+
+  function currentView(){
+    const q = fold(state.query.trim());
+    let rows = DATA.filter(it => state.medium === 'all' || it.medium === state.medium);
+    if(state.years){
+      const {lo, hi} = state.years;
+      rows = rows.filter(it => it.year != null && it.year !== '' && +it.year >= lo && +it.year <= hi);
+    }
+    if(q) rows = rows.filter(it => it._hay.indexOf(q) !== -1);
+    rows = groupVersions(rows);
+    rows.sort(SORTS[state.sort] || SORTS.rating);
+    return rows;
+  }
+
+  /* ---- entry --------------------------------------------------------- */
+  function el(tag, cls, text){
+    const n = document.createElement(tag);
+    if(cls) n.className = cls;
+    if(text != null) n.textContent = text;
+    return n;
+  }
+  function grade(rating, cls){
+    const g = el('span', cls);
+    g.appendChild(rating == null ? el('span', 'grade-unrated', 'unrated')
+                                 : el('span', 'grade-num', (+rating).toFixed(1)));
+    return g;
+  }
+  function note(it){
+    if(it.review_withheld) return [el('p', 'withheld-note', 'This note is kept private.')];
+    return String(it.review || '').split(/\n+/).map(t => t.trim()).filter(Boolean).map(t => el('p', null, t));
+  }
+  // optional cover art (hover preview on desktop); vanishes if the file
+  // is missing so a broken image never shows
+  function addCover(li, src){
+    if(!src) return;
+    const cover = el('span', 'cover');
+    const img = el('img');
+    img.loading = 'lazy'; img.alt = '';
+    img.addEventListener('error', () => { cover.remove(); });
+    img.src = src;
+    cover.appendChild(img);
+    li.appendChild(cover);
+  }
+  let panels = 0;
+  function addPanel(li, head, nodes){
+    const id = 'rev-' + (++panels);
+    head.type = 'button';
+    head.setAttribute('aria-expanded', 'false');
+    head.setAttribute('aria-controls', id);
+    const rev = el('div', 'entry-rev');
+    rev.id = id;
+    rev.setAttribute('aria-hidden', 'true');
+    const inner = el('div', 'entry-rev-inner');
+    nodes.forEach(n => inner.appendChild(n));
+    rev.appendChild(inner);
+    li.appendChild(rev);
+    head.addEventListener('click', () => {
+      const open = head.getAttribute('aria-expanded') === 'true';
+      head.setAttribute('aria-expanded', String(!open));
+      rev.setAttribute('aria-hidden', String(open));
+      rev.classList.toggle('open', !open);
+    });
+  }
+  function makeHead(it, flag, expandable){
+    const head = el(expandable ? 'button' : 'div', 'entry-head' + (expandable ? '' : ' static'));
+    const main = el('span', 'entry-main');
+    main.appendChild(el('span', 'entry-title', it.title));
+    main.appendChild(el('span', 'entry-meta', metaLine(it)));
+    const v = it.versions ? '' : versionLine(it);
+    if(v) main.appendChild(el('span', 'entry-version', v));
+    if(flag) main.appendChild(flag);
+    head.appendChild(main);
+    head.appendChild(grade(it.rating, 'entry-grade'));
+    return head;
+  }
+  function makeEntry(it){
+    const li = el('li', 'entry');
+    const expandable = !!it.review || !!it.review_withheld;
+    const flag = expandable ? el('span', 'entry-flag' + (it.review_withheld ? ' withheld' : ''),
+                                 it.review_withheld ? 'private note' : 'note') : null;
+    const head = makeHead(it, flag, expandable);
+    li.appendChild(head);
+    addCover(li, it.image);
+    if(expandable) addPanel(li, head, note(it));
+    return li;
+  }
+  // One work in several translations or recordings: the row shows the best
+  // rating and opens onto each version, with its own rating and note.
+  function makeWorkEntry(w){
+    const li = el('li', 'entry entry-work');
+    const head = makeHead(w, el('span', 'entry-flag', w.versions.length + ' ' + versionNoun(w)), true);
+    li.appendChild(head);
+    addCover(li, w.image);
+    const ol = el('ol', 'versions');
+    w.versions.forEach(v => {
+      const item = el('li', 'version');
+      const vh = el('div', 'version-head');
+      vh.appendChild(el('span', 'version-name', versionLine(v)));
+      vh.appendChild(grade(v.rating, 'version-grade'));
+      item.appendChild(vh);
+      note(v).forEach(p => item.appendChild(p));
+      ol.appendChild(item);
+    });
+    addPanel(li, head, [ol]);
+    return li;
+  }
+
+  // first letter of a sort key, for the dividers in the A–Z sorts
+  function initial(k){
+    const ch = fold(String(k || '').charAt(0)).charAt(0);
+    if(/[0-9]/.test(ch)) return '0\u20139';
+    if(/[a-z]/.test(ch)) return ch.toUpperCase();
+    return ch ? '\u2026' : '';
+  }
+
+  /* ---- render -------------------------------------------------------- */
+  function render(){
+    const rows = currentView();
+    listEl.innerHTML = '';
+    const n = rows.reduce((s, r) => s + (r.versions ? r.versions.length : 1), 0);
+    if(rows.length === 0){
+      listEl.hidden = true;
+      emptyEl.hidden = false;
+      emptyEl.innerHTML = '';
+      const q = state.query.trim();
+      const when = state.years ? yearPhrase(state.years) : '';
+      emptyEl.appendChild(el('p', 'empty-msg',
+          q && when ? 'Nothing ' + when + ' matches \u201c' + q + '\u201d.'
+        : q         ? 'Nothing matches \u201c' + q + '\u201d.'
+        : when      ? 'Nothing ' + when + '.'
+        :             'Nothing here yet.'));
+      if(q || when){
+        const b = el('button', 'empty-clear', q && when ? 'Clear filters' : q ? 'Clear search' : 'Clear year');
+        b.type = 'button';
+        b.addEventListener('click', () => {
+          if(q) clearSearch();
+          if(when) clearYear();
+          render();
+          (q ? searchEl : yearEl).focus();
         });
+        emptyEl.appendChild(b);
       }
-      const s = state.sort;
-      rows.sort((a,b)=>{
-        if(s==='rating'){
-          const d = num(b.rating)-num(a.rating);
-          return d
-            || creatorKey(a).localeCompare(creatorKey(b))
-            || latinKey(a.title).localeCompare(latinKey(b.title));
+    }else{
+      emptyEl.hidden = true;
+      listEl.hidden = false;
+      const frag = document.createDocumentFragment();
+      const lettered = state.sort === 'title' || state.sort === 'creator';
+      let last = null;
+      rows.forEach(r => {
+        if(lettered){
+          const L = initial(state.sort === 'title' ? r._title : r._creator[0]);
+          if(L !== last){
+            const h = el('li', 'letter', L);
+            h.setAttribute('aria-hidden', 'true');
+            frag.appendChild(h);
+            last = L;
+          }
         }
-        if(s==='year'){
-          const d = num(b.year)-num(a.year);
-          return d
-            || latinKey(a.creator).localeCompare(latinKey(b.creator))
-            || latinKey(a.title).localeCompare(latinKey(b.title));
-        }
-        if(s==='creator'){
-          const d = latinKey(a.creator).localeCompare(latinKey(b.creator));
-          return d || num(a.year)-num(b.year);
-        }
-        return latinKey(a.title).localeCompare(latinKey(b.title));
+        frag.appendChild(r.versions ? makeWorkEntry(r) : makeEntry(r));
       });
-      return rows;
+      listEl.appendChild(frag);
     }
+    countEl.textContent = n + ' ' + (n === 1 ? 'entry' : 'entries');
+  }
 
-    function metaLine(it){
-      const bits=[];
-      const c=creatorLabel(it);
-      if(c) bits.push(c);
-      if(it.year!=null) bits.push(String(it.year));
-      return bits.join(' \u00b7 ');
-    }
+  /* ---- controls ------------------------------------------------------ */
+  function clearSearch(){ state.query = ''; searchEl.value = ''; clearEl.hidden = true; }
+  function clearYear(){ state.years = null; yearEl.value = ''; yearEl.removeAttribute('aria-invalid'); }
 
-    /* ---- entry --------------------------------------------------------- */
-    function makeEntry(it){
-      const li=document.createElement('li');
-      li.className='entry';
-
-      const expandable = !!it.review || !!it.review_withheld;
-      const head=document.createElement(expandable ? 'button' : 'div');
-      head.className='entry-head'+(expandable ? '' : ' static');
-      if(expandable){
-        head.type='button';
-        head.setAttribute('aria-expanded','false');
-        head.setAttribute('aria-controls','rev-'+it.id);
-      }
-
-      const main=document.createElement('span');
-      main.className='entry-main';
-
-      const title=document.createElement('span');
-      title.className='entry-title';
-      title.textContent=it.title;
-      main.appendChild(title);
-
-      const meta=document.createElement('span');
-      meta.className='entry-meta';
-      meta.textContent=metaLine(it);
-      main.appendChild(meta);
-
-      if(expandable){
-        const flag=document.createElement('span');
-        flag.className='entry-flag'+(it.review_withheld ? ' withheld' : '');
-        flag.textContent=it.review_withheld ? 'private note' : 'note';
-        main.appendChild(flag);
-      }
-      head.appendChild(main);
-
-      const grade=document.createElement('span');
-      grade.className='entry-grade';
-      if(it.rating==null){
-        grade.innerHTML='<span class="grade-unrated">unrated</span>';
-      }else{
-        grade.innerHTML='<span class="grade-num">'+it.rating.toFixed(1)+'</span>';
-      }
-      head.appendChild(grade);
-      li.appendChild(head);
-
-      // optional cover art (hover preview on desktop); vanishes if the file
-      // is missing so a broken image never shows
-      if(it.image){
-        const cover=document.createElement('span');
-        cover.className='cover';
-        const img=document.createElement('img');
-        img.loading='lazy'; img.alt='';
-        img.addEventListener('error', ()=>{ cover.remove(); });
-        img.src=it.image;
-        cover.appendChild(img);
-        li.appendChild(cover);
-      }
-
-      if(expandable){
-        const rev=document.createElement('div');
-        rev.className='entry-rev';
-        rev.id='rev-'+it.id;
-        rev.setAttribute('aria-hidden','true');
-        const inner=document.createElement('div');
-        inner.className='entry-rev-inner';
-        if(it.review_withheld){
-          const p=document.createElement('p');
-          p.className='withheld-note';
-          p.textContent='This note is kept private.';
-          inner.appendChild(p);
-        }else{
-          it.review.split(/\n+/).forEach(par=>{
-            const t=par.trim();
-            if(!t) return;
-            const p=document.createElement('p');
-            p.textContent=t;
-            inner.appendChild(p);
-          });
-        }
-        rev.appendChild(inner);
-        li.appendChild(rev);
-        head.addEventListener('click', ()=>{
-          const open = head.getAttribute('aria-expanded')==='true';
-          head.setAttribute('aria-expanded', String(!open));
-          rev.setAttribute('aria-hidden', String(open));
-          rev.classList.toggle('open', !open);
-        });
-      }
-      return li;
-    }
-
-    /* ---- render -------------------------------------------------------- */
-    function render(){
-      const rows=currentView();
-      listEl.innerHTML='';
-      if(rows.length===0){
-        listEl.hidden=true;
-        emptyEl.hidden=false;
-        emptyEl.innerHTML='';
-        const p=document.createElement('p');
-        p.className='empty-msg';
-        p.textContent = state.query
-          ? 'Nothing matches \u201c'+state.query.trim()+'\u201d.'
-          : 'Nothing here yet.';
-        emptyEl.appendChild(p);
-        if(state.query){
-          const b=document.createElement('button');
-          b.className='empty-clear';b.type='button';
-          b.textContent='Clear search';
-          b.addEventListener('click', clearSearch);
-          emptyEl.appendChild(b);
-        }
-      }else{
-        emptyEl.hidden=true;
-        listEl.hidden=false;
-        const frag=document.createDocumentFragment();
-        rows.forEach(it=> frag.appendChild(makeEntry(it)));
-        listEl.appendChild(frag);
-      }
-      const total=DATA.length, n=rows.length;
-      const noun = n===1 ? 'entry' : 'entries';
-      countEl.textContent = (n===total) ? (total+' '+noun) : (n+' '+noun);
-    }
-
-    /* ---- controls ------------------------------------------------------ */
-    function clearSearch(){
-      state.query=''; searchEl.value=''; clearEl.hidden=true;
-      render(); searchEl.focus();
-    }
-    document.querySelectorAll('.chip').forEach(chip=>{
-      chip.addEventListener('click', ()=>{
-        state.medium=chip.dataset.medium;
-        document.querySelectorAll('.chip').forEach(c=>
-          c.setAttribute('aria-pressed', String(c===chip)));
-        render();
-      });
-    });
-    document.getElementById('sort').addEventListener('change', e=>{
-      state.sort=e.target.value; render();
-    });
-    let t=null;
-    searchEl.addEventListener('input', e=>{
-      const v=e.target.value;
-      clearEl.hidden = v.length===0;
-      clearTimeout(t);
-      t=setTimeout(()=>{ state.query=v; render(); }, 90);
-    });
-    clearEl.addEventListener('click', clearSearch);
-
-    /* ---- boot ---------------------------------------------------------- */
-    loadData().then(data=>{
-      DATA = Array.isArray(data) ? data : [];
-      const parts=[];
-      const reviewed = DATA.filter(x=>x.review).length;
-      const col=document.getElementById('colophon-line');
+  document.querySelectorAll('.chip').forEach(chip=>{
+    chip.addEventListener('click', ()=>{
+      state.medium=chip.dataset.medium;
+      document.querySelectorAll('.chip').forEach(c=>
+        c.setAttribute('aria-pressed', String(c===chip)));
       render();
     });
+  });
+  document.getElementById('sort').addEventListener('change', e=>{
+    state.sort=e.target.value; render();
+  });
+  let t=null;
+  searchEl.addEventListener('input', e=>{
+    const v=e.target.value;
+    clearEl.hidden = v.length===0;
+    clearTimeout(t);
+    t=setTimeout(()=>{ state.query=v; render(); }, 90);
+  });
+  clearEl.addEventListener('click', ()=>{ clearSearch(); render(); searchEl.focus(); });
+
+  // The year box waits for a pause in typing, so "1957" doesn't flash
+  // through 1, 19 and 195 on the way. Escape clears it.
+  let ty=null;
+  yearEl.addEventListener('input', ()=>{
+    clearTimeout(ty);
+    ty=setTimeout(()=>{
+      const r = parseYears(yearEl.value);
+      if(r === undefined) yearEl.setAttribute('aria-invalid', 'true');
+      else yearEl.removeAttribute('aria-invalid');
+      state.years = r || null;
+      render();
+    }, 300);
+  });
+  yearEl.addEventListener('keydown', e=>{
+    if(e.key === 'Escape' && yearEl.value){ clearTimeout(ty); clearYear(); render(); }
+  });
+
+  /* ---- boot ---------------------------------------------------------- */
+  loadData().then(data=>{
+    DATA = Array.isArray(data) ? data : [];
+    DATA.forEach(prepare);
+    render();
+  });
   })();
   </script>
 </body>
